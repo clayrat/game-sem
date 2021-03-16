@@ -1,0 +1,7 @@
+package gamesem
+
+sourcedir = src
+
+modules = Int
+
+opts = "-p contrib"
