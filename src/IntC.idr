@@ -1,4 +1,4 @@
-module Int
+module IntC
 
 import Data.Either
 
