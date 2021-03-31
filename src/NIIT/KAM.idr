@@ -54,3 +54,50 @@ initT d = StT (ClT d []) Mt
 initTSize : (d : TermT [] u t) -> sizeState (initT d) = sizeTerm d
 initTSize d = rewrite plusZeroRightNeutral (sizeTerm d) in
               plusZeroRightNeutral (sizeTerm d)
+
+permuteCla : Perm s2 s1 -> ClaT c s1 -> ClaT c s2
+permuteCla  Nil                          d   = d
+permuteCla (Skip p)             (ConsC c d)  = ConsC c $ permuteCla p d
+permuteCla  Swap       (ConsC b (ConsC c d)) = ConsC c $ ConsC b d
+permuteCla (Trans p q)                   d   = permuteCla p (permuteCla q d)
+
+permuteClaSize : (p : Perm s2 s1) -> (d : ClaT c s1) -> sizeCla d = sizeCla (KAM.permuteCla p d)
+permuteClaSize  Nil                          d   = Refl
+permuteClaSize (Skip p)             (ConsC c d)  = cong (plus (sizeClo c)) $ permuteClaSize p d
+permuteClaSize  Swap       (ConsC b (ConsC c d)) = rewrite plusAssociative (sizeClo b) (sizeClo c) (sizeCla d) in
+                                                   rewrite plusCommutative (sizeClo b) (sizeClo c) in
+                                                   sym $ plusAssociative (sizeClo c) (sizeClo b) (sizeCla d)
+permuteClaSize (Trans p q)                   d   = rewrite permuteClaSize q d in
+                                                   permuteClaSize p (permuteCla q d)
+
+permuteEnv : PermCtx g2 g1 -> EnvT e g1 -> EnvT e g2
+permuteEnv  NilP      []    = []
+permuteEnv (SnP d p) (c::e) = permuteCla p c :: permuteEnv d e
+
+permuteEnvSize : (p : PermCtx g2 g1) -> (d : EnvT e g1) -> sizeEnv d = sizeEnv (permuteEnv p d)
+permuteEnvSize  NilP     []     = Refl
+permuteEnvSize (SnP d p) (c::e) = rewrite permuteClaSize p c in
+                                  rewrite permuteEnvSize d e in
+                                  Refl
+
+claSplit : {s1 : List Ty} ->
+           ClaT c (s1 ++ s2) -> (ClaT c s1, ClaT c s2)
+claSplit {s1=[]}             d  = (NilC, d)
+claSplit {s1=x::s1} (ConsC c d) = (ConsC c (fst $ claSplit d),snd $ claSplit d)
+-- `let (d1,d2) = claSplit d in (ConsC c d1,d2)` blocks reduction in the second case below
+-- TODO file a bug
+
+claSplitSize : {s1 : List Ty} -> {0 s2 : List Ty} ->
+               (d : ClaT c (s1 ++ s2)) -> sizeCla d = sizeCla (fst $ KAM.claSplit {s1} {s2} d) + sizeCla (snd $ KAM.claSplit {s1} {s2} d)
+claSplitSize {s1=[]}             d  = Refl
+claSplitSize {s1=x::s1} (ConsC c d) = rewrite sym $ plusAssociative (sizeClo c) (sizeCla (fst $ claSplit {s1} {s2} d)) (sizeCla (snd $ claSplit {s1} {s2} d)) in
+                                      cong (plus (sizeClo c)) $ claSplitSize {s1} d
+
+envSplit : {n : Nat} -> {0 e : Env n} -> {g1 : Ctx n} -> {0 g2 : Ctx n} ->
+           EnvT e (zip g1 g2) -> (EnvT e g1,EnvT e g2)
+envSplit {n=Z}   {g1=[]}     {g2=[]}     []     = ([], [])
+envSplit {n=S n} {g1=g1:>x1} {g2=g2:>x2} (c::d) =
+  let (c1,c2) = claSplit c
+      (d1,d2) = envSplit d
+    in
+  (c1::d1,c2::d2)

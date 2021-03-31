@@ -59,14 +59,3 @@ mutual
   sizeAux : AuxT g u s -> Nat
   sizeAux NilA           = 0
   sizeAux (ConsA d _ ds) = sizeTerm d + sizeAux ds
-
-{-
-mutual
-  data EnvT : Env n -> Ctx n -> Type where
-    Nil  : Env Z
-    (::) : Clos -> Env n -> Env (S n)
-
-  public export
-  data Clos : Type where
-    Cl : Term n -> Env n -> Clos
--}
