@@ -2,10 +2,16 @@ module NIIT.KAM
 
 import Data.Nat
 import Data.Fin
+import Data.Vect
+import Data.DPair
+import Data.List.HasLength
+
 import Nat
 import Perm
+
 import Lambda.Term
 import Lambda.KAM
+
 import NIIT.Ty
 import NIIT.Term
 
@@ -19,7 +25,8 @@ mutual
 
   public export
   data CloT : Clos -> Ty -> Type where
-    ClT : {n : Nat} -> {0 e : Env n} -> {0 g : Ctx n} -> {0 u : Term n} ->
+    ClT : {0 n : Nat} -> {0 e : Env n} -> {0 u : Term n} ->
+          {ns : Vect n Nat} -> {0 g : Ctx n} -> {0 hl : HasLengths g ns} ->
           TermT g u t -> EnvT e g -> CloT (Cl u e) t
 
   public export
@@ -45,7 +52,8 @@ mutual
 public export
 data StackT : Stack -> Ty -> Ty -> Type where
   Mt  : StackT [] t t
-  Arg : ClaT c s -> StackT p t1 t2 -> StackT (c::p) (s ~> t1) t2
+  Arg : {n1 : Nat} -> {0 s : List Ty} -> {0 p1 : HasLength s n1} ->
+        ClaT c s -> StackT p t1 t2 -> StackT (c::p) (s ~> t1) t2
 
 public export
 sizeStack : StackT p t1 t2 -> Nat
@@ -61,7 +69,7 @@ sizeState : StateT p t -> Nat
 sizeState (StT c p) = sizeClo c + sizeStack p
 
 initT : TermT [] u t -> StateT (KAM.init u) t
-initT d = StT (ClT d []) Mt
+initT d = StT (ClT {hl=NilHL} d []) Mt
 
 initTSize : (d : TermT [] u t) -> sizeState (initT d) = sizeTerm d
 initTSize d = rewrite plusZeroRightNeutral (sizeTerm d) in
@@ -94,64 +102,65 @@ permuteEnvSize (SnP d p) (c::e) = rewrite permuteClaSize p c in
                                   rewrite permuteEnvSize d e in
                                   Refl
 
--- here and after we don't really need the full contexts at runtime, just their lengths
-claSplit : {s1 : List Ty} ->
+claSplit : {n1 : Nat} -> {0 s1 : List Ty} -> {0 p : HasLength s1 n1} ->
            ClaT c (s1 ++ s2) -> (ClaT c s1, ClaT c s2)
-claSplit {s1=[]}             d  = (NilC, d)
-claSplit {s1=x::s1} (ConsC c d) = (ConsC c (fst $ claSplit d),snd $ claSplit d)
+claSplit {n1=Z}    {p=Z}            d  = (NilC, d)
+claSplit {n1=S n1} {p=S p} (ConsC c d) = (ConsC c (fst $ claSplit {p} d),snd $ claSplit {p} d)
 -- `let (d1,d2) = claSplit d in (ConsC c d1,d2)` blocks reduction in the second case below
 -- TODO file a bug
 
-claSplitSize : {s1 : List Ty} -> {0 s2 : List Ty} ->
-               (d : ClaT c (s1 ++ s2)) -> sizeCla d = sizeCla (fst $ KAM.claSplit {s1} {s2} d) + sizeCla (snd $ KAM.claSplit {s1} {s2} d)
-claSplitSize {s1=[]}             d  = Refl
-claSplitSize {s1=x::s1} (ConsC c d) = rewrite sym $ plusAssociative (sizeClo c) (sizeCla (fst $ claSplit {s1} {s2} d)) (sizeCla (snd $ claSplit {s1} {s2} d)) in
-                                      cong (plus (sizeClo c)) $ claSplitSize {s1} d
+claSplitSize : {n1 : Nat} -> {0 s1 : List Ty} -> {0 s2 : List Ty} -> {0 p : HasLength s1 n1} ->
+               (d : ClaT c (s1 ++ s2)) -> sizeCla d = sizeCla (fst $ KAM.claSplit {p} {s2} d) + sizeCla (snd $ KAM.claSplit {p} {s2} d)
+claSplitSize {n1=Z}    {p=Z}            d  = Refl
+claSplitSize {n1=S n1} {p=S p} (ConsC c d) = rewrite sym $ plusAssociative (sizeClo c) (sizeCla (fst $ claSplit {p} {s2} d)) (sizeCla (snd $ claSplit {p} {s2} d)) in
+                                             cong (plus (sizeClo c)) $ claSplitSize {p} d
 
 export
-envSplit : {n : Nat} -> {0 e : Env n} -> {g1 : Ctx n} -> {0 g2 : Ctx n} ->
+envSplit : {n : Nat} -> {0 e : Env n} -> {ns : Vect n Nat} -> {0 g1 : Ctx n} -> {0 g2 : Ctx n} -> {0 hl : HasLengths g1 ns} ->
            EnvT e (zip g1 g2) -> (EnvT e g1,EnvT e g2)
-envSplit {n=Z}   {g1=[]}     {g2=[]}     []     = ([], [])
-envSplit {n=S n} {g1=g1:>x1} {g2=g2:>x2} (c::d) =
-  (fst (claSplit c)::fst (envSplit d),snd (claSplit c)::snd (envSplit d))
+envSplit {n=Z}   {ns=[]}     {g2=[]}     {hl=NilHL}       []     = ([], [])
+envSplit {n=S n} {ns=n1::ns} {g2=g2:>x2} {hl=ConsHL hl p} (c::d) =
+  (fst (claSplit {p} c)::fst (envSplit {hl} d),snd (claSplit {p} c)::snd (envSplit {hl} d))
 --  let (c1,c2) = claSplit c
 --      (d1,d2) = envSplit d
 --    in
 --  (c1::d1,c2::d2)
 
 export
-envSplitSize : {n : Nat} -> {0 e : Env n} -> {g1 : Ctx n} -> {0 g2 : Ctx n} ->
-               (d : EnvT e (zip g1 g2)) -> sizeEnv d = sizeEnv (fst $ envSplit {g1} {g2} d) + sizeEnv (snd $ envSplit {g1} {g2} d)
-envSplitSize {n=Z}   {g1=[]}     {g2=[]}     []     = Refl
-envSplitSize {n=S n} {g1=g1:>x1} {g2=g2:>x2} (c::d) = rewrite claSplitSize {s1=x1} {s2=x2} c in
-                                                      rewrite envSplitSize {g1} {g2} d in
-                                                      interchange (sizeCla $ fst $ claSplit c) (sizeCla $ snd $ claSplit c)
-                                                                  (sizeEnv $ fst $ envSplit d) (sizeEnv $ snd $ envSplit d)
+envSplitSize : {n : Nat} -> {0 e : Env n} -> {ns : Vect n Nat} -> {0 g1 : Ctx n} -> {0 g2 : Ctx n} -> {0 hl : HasLengths g1 ns} ->
+               (d : EnvT e (zip g1 g2)) -> sizeEnv d = sizeEnv (fst $ envSplit {hl} {g2} d) + sizeEnv (snd $ envSplit {hl} {g2} d)
+envSplitSize {n=Z}   {ns=[]}     {g2=[]}     {hl=NilHL}       []     = Refl
+envSplitSize {n=S n} {ns=n1::ns} {g2=g2:>x2} {hl=ConsHL hl p} (c::d) = rewrite claSplitSize {p} {s2=x2} c in
+                                                                       rewrite envSplitSize {hl} {g2} d in
+                                                                       interchange (sizeCla $ fst $ claSplit c) (sizeCla $ snd $ claSplit c)
+                                                                                   (sizeEnv $ fst $ envSplit d) (sizeEnv $ snd $ envSplit d)
 
 export
 claEmpty : (d : ClaT c []) -> sizeCla d = 0
 claEmpty NilC = Refl
 
 export
-envEmpty : {n : Nat} -> {0 e : Env n} -> (d : EnvT e (Empty n)) -> sizeEnv d = 0
+envEmpty : (d : EnvT e (Empty n)) -> sizeEnv d = 0
 envEmpty []     = Refl
 envEmpty (c::d) = rewrite claEmpty c in
                   envEmpty d
 
 export
-mkCla : {s : List Ty} -> {n : Nat} -> {0 g : Ctx n} -> {0 e : Env n} -> {0 u : Term n} ->
+mkCla : {n1 : Nat} -> {0 s : List Ty} -> {0 p1 : HasLength s n1} ->
+        {n : Nat} -> {0 g : Ctx n} -> {0 e : Env n} -> {0 u : Term n} ->
         EnvT e g -> AuxT g u s -> ClaT (Cl u e) s
-mkCla {s=[]}   d  NilA         = NilC
-mkCla {s=t::s} d (ConsA x p a) = ConsC (ClT x (fst $ envSplit $ permuteEnv p d))
-                                       (mkCla (snd $ envSplit $ permuteEnv p d) a)
+mkCla {n1=Z}   {p1=Z}    d  NilA         = NilC
+mkCla {n1=S n} {p1=S p1} d (ConsA {hl} x p a) = ConsC (ClT {hl} x (fst $ envSplit {hl} $ permuteEnv p d))
+                                                      (mkCla {p1} (snd $ envSplit {hl} $ permuteEnv p d) a)
 
 export
-sizeMkCla : {s : List Ty} -> {n : Nat} -> {0 g : Ctx n} -> {0 e : Env n} -> {0 u : Term n} ->
-            (d : EnvT e g) -> (a : AuxT g u s) -> sizeAux a + sizeEnv d = sizeCla (mkCla d a)
-sizeMkCla {s=[]}   d  NilA                   = envEmpty d
-sizeMkCla {s=t::s} d (ConsA {g1} {g2} x p a) = rewrite permuteEnvSize p d in
-                                               rewrite envSplitSize {n} {g1} {g2} (permuteEnv p d) in
-                                               rewrite interchange (sizeTerm x) (sizeAux a) (sizeEnv $ fst $ envSplit {n} {g1} {g2} $ permuteEnv p d)
-                                                                                            (sizeEnv $ snd $ envSplit {n} {g1} {g2} $ permuteEnv p d) in
-                                               rewrite sizeMkCla (snd $ envSplit {n} {g1} {g2} $ permuteEnv p d) a in
-                                               Refl
+sizeMkCla : {n1 : Nat} -> {0 s : List Ty} -> {0 p1 : HasLength s n1} ->
+            {n : Nat} -> {0 g : Ctx n} -> {0 e : Env n} -> {0 u : Term n} ->
+            (d : EnvT e g) -> (a : AuxT g u s) -> sizeAux a + sizeEnv d = sizeCla (mkCla {p1} d a)
+sizeMkCla {n1=Z}   {p1=Z}    d  NilA              = envEmpty d
+sizeMkCla {n1=S n} {p1=S p1} d (ConsA {hl} {g2} x p a) = rewrite permuteEnvSize p d in
+                                                         rewrite envSplitSize {hl} {g2} (permuteEnv p d) in
+                                                         rewrite interchange (sizeTerm x) (sizeAux a) (sizeEnv $ fst $ envSplit {hl} {g2} $ permuteEnv p d)
+                                                                                                      (sizeEnv $ snd $ envSplit {hl} {g2} $ permuteEnv p d) in
+                                                         rewrite sizeMkCla (snd $ envSplit {hl} {g2} $ permuteEnv p d) a in
+                                                         Refl

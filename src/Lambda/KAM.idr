@@ -1,6 +1,7 @@
 module Lambda.KAM
 
 import Data.Fin
+
 import Lambda.Term
 
 %default total
@@ -31,10 +32,11 @@ init t = St (Cl t []) []
 
 public export
 data Step : State -> State -> Type where
-  Grab : Step (St (Cl (Var  FZ   ) (Cl t e0::e))     s ) (St (Cl  t           e0)          s )
-  Skip : Step (St (Cl (Var (FS x)) (      _::e))     s ) (St (Cl (Var x)      e )          s )
-  Push : Step (St (Cl (App t u   )           e )     s ) (St (Cl  t           e ) (Cl u e::s))
-  Pop  : Step (St (Cl (Lam t     )           e ) (c::s)) (St (Cl  t       (c::e))          s )
+  Grab : {z : Nat} -> {0 e : Env z} ->
+         Step (St (Cl (Var (FZ {k=z})) (Cl t e0::e))     s ) (St (Cl  t           e0)          s )
+  Skip : Step (St (Cl (Var (FS x)    ) (      _::e))     s ) (St (Cl (Var x)      e )          s )
+  Push : Step (St (Cl (App t u       )           e )     s ) (St (Cl  t           e ) (Cl u e::s))
+  Pop  : Step (St (Cl (Lam t         )           e ) (c::s)) (St (Cl  t       (c::e))          s )
 
 deterministic : Step p q -> Step p r -> q = r
 deterministic Grab Grab = Refl
