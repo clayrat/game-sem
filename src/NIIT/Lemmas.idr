@@ -27,12 +27,12 @@ subjRed Pop  (StT (ClT {hl}             (LamT t)                              e 
 
 sizeSR : (pq : Step p q) -> (st : StateT p t) -> sizeState st = S (sizeState (subjRed pq st))
 sizeSR Grab (StT (ClT {n=S n}          (VarT  Zero)                (ConsC c NilC::e))        k ) =
-  rewrite envEmpty {n} e in
+  rewrite envEmptySize {n} e in
   rewrite plusZeroRightNeutral (sizeClo c) in
   rewrite plusZeroRightNeutral (sizeClo c) in
   Refl
 sizeSR Skip (StT (ClT {hl=ConsHL hl _} (VarT (Suc x))                         (c::e))        k ) =
-  rewrite claEmpty c in
+  rewrite claEmptySize c in
   Refl
 sizeSR Push (StT (ClT                  (AppT {hl} {p1} {g2} t a p)                e )        k ) =
   rewrite permuteEnvSize p e in
@@ -49,28 +49,46 @@ sizeSR Pop  (StT (ClT                  (LamT t)                                 
   rewrite plusCommutative (sizeEnv e) (sizeCla c) in
   cong S $ plusAssociative (sizeTerm t) (sizeCla c + sizeEnv e) (sizeStack k)
 
-claJoin : ClaT c s1 -> ClaT c s2 -> ClaT c (s1 ++ s2)
-claJoin  NilC        c2 = c2
-claJoin (ConsC c c1) c2 = ConsC c $ claJoin c1 c2
-
-envJoin : EnvT e g1 -> EnvT e g2 -> EnvT e (zip g1 g2)
-envJoin []       []       = []
-envJoin (c1::e1) (c2::e2) = claJoin c1 c2 :: envJoin e1 e2
-
-envEmpty : {n : Nat} -> {0 e : Env n} -> EnvT e (Empty n)
-envEmpty {n=Z}   {e=[]}   = []
-envEmpty {n=S n} {e=c::e} = NilC :: envEmpty
-
-unMkCla : {n : Nat} -> {0 e : Env n} -> {0 u : Term n} ->
-          ClaT (Cl u e) s -> Exists (\g => (Subset (Vect n Nat) (HasLengths g), EnvT e g, AuxT g u s))
-unMkCla  NilC                               = Evidence (Empty n) (Element (replicate n Z) emptyHL, envEmpty, NilA)
-unMkCla (ConsC (ClT {g} {ns} {hl} u0 e0) c) = let Evidence g1 (Element ns1 hl1, e1, a1) = unMkCla c
-                                                  0 hl2 = zipHL hl hl1
-                                               in
-                                              Evidence (zip g g1) (Element (zipWith (+) ns ns1) hl2, envJoin e0 e1, ConsA {hl} u0 (permCtxRefl {hl=hl2}) a1)
-
 subjExp : Step p q -> StateT q t -> StateT p t
-subjExp (Grab {z}) (StT  c                    k) = StT (ClT {hl = ConsHL emptyHL (S Z)} (VarT Zero)    (ConsC c NilC :: (envEmpty {n=z}))) k
-subjExp  Skip      (StT (ClT {hl} (VarT x) e) k) = StT (ClT {hl = ConsHL hl Z}          (VarT $ Suc x) (NilC         :: e               )) k
-subjExp  Push      (StT  c                    k) = ?wat
-subjExp  Pop       (StT  c                    k) = ?wat4
+subjExp (Grab {z}) (StT  c                                           k ) = StT (ClT {hl=ConsHL emptyHL (S Z)} (VarT Zero)    (ConsC c NilC::envEmpty {n=z}))             k
+subjExp  Skip      (StT (ClT {hl} (VarT x)           e )             k ) = StT (ClT {hl=ConsHL hl Z}          (VarT $ Suc x) (NilC        ::e             ))             k
+subjExp  Push      (StT (ClT {hl} t                  e ) (Arg {p1} c k)) = let Evidence g1 (Element ns1 hl1, e1, a1) = unMkCla c
+                                                                               0 hl2 = zipHL hl hl1
+                                                                            in
+                                                                           StT (ClT {hl=hl2} (AppT {hl} {p1} t a1 (permCtxRefl {hl=hl2})) (envJoin e e1))                k
+subjExp  Pop       (StT (ClT {hl=ConsHL hl p1} t (c::e))             k ) = StT (ClT {hl} (LamT t) e)                                                         (Arg {p1} c k)
+
+progress : (d : StateT p V) -> Not (sizeState d = 0) -> Exists (Step p)
+progress (StT {p} (ClT          (VarT Zero)        (ConsC (ClT {u} {e} _ _) NilC::_))       _ ) _  = Evidence (St (Cl  u      e )          p ) Grab
+progress (StT {p} (ClT {e=_::e} (VarT (Suc {i} _))                            (_::_))       _ ) _  = Evidence (St (Cl (Var i) e )          p ) Skip
+progress (StT {p} (ClT {e} (AppT {u} {v} _ _ _)                                   _)        _ ) _  = Evidence (St (Cl  u      e ) (Cl v e::p)) Push
+progress (StT {p=c::p} (ClT {e} {u=Lam u} (LamT _)                                _) (Arg _ _)) _  = Evidence (St (Cl  u  (c::e))          p ) Pop
+progress (StT     (ClT ValT                                                       e)       Mt ) nz = absurd $ replace {p= \x=>Not (x+0=0)} (envEmptySize e) nz Refl
+
+soundness : (d : TermT [] t V) -> Reduces (sizeTerm d) (St (Cl t []) [])
+soundness d = rewrite sym $ initTSize d in
+              run (initT d) (sizeState (initT d)) Refl
+  where
+  final : (d : StateT p V) -> sizeState d = 0 -> Reduces 0 p
+  final (StT (ClT (VarT Zero)    _) _ ) sz = absurd sz
+  final (StT (ClT (VarT (Suc _)) _) _ ) sz = absurd sz
+  final (StT (ClT (AppT _ _ _)   _) _ ) sz = absurd sz
+  final (StT (ClT (LamT _)       _) _ ) sz = absurd sz
+  final (StT (ClT  ValT          _) Mt) _  = Stop
+
+  run : (d : StateT p V) -> (k : Nat) -> sizeState d = k -> Reduces k p
+  run d  Z    sz = final d sz
+  run d (S k) sz = let Evidence q st = progress d (rewrite sz in absurd) in
+                   More st (run (subjRed st d) k (succInjective (sizeState $ subjRed st d) k $
+                                                  trans (sym $ sizeSR st d) sz))
+
+completeness : Reduces n (St (Cl t []) []) -> (d : TermT [] t V ** sizeTerm d = n)
+completeness r = let d = extract $ stateTyped r in
+                 (d ** reducesDet (soundness d) r)
+  where
+  extract : StateT (St (Cl t []) []) V -> TermT [] t V
+  extract (StT (ClT t []) Mt) = t
+
+  stateTyped : Reduces k p -> StateT p V
+  stateTyped  Stop       = StT (ClT {hl=emptyHL} ValT envEmpty) Mt
+  stateTyped (More st r) = subjExp st (stateTyped r)

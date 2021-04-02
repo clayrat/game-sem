@@ -44,10 +44,13 @@ deterministic Skip Skip = Refl
 deterministic Push Push = Refl
 deterministic Pop  Pop  = Refl
 
+public export
 data Reduces : Nat -> State -> Type where
-  Stop :                            Reduces  Z    (St (Cl (Lam t) e) [])
+  Stop : {n : Nat} -> {0 t : Term (S n)} -> {0 e : Env n} ->
+                                    Reduces  Z    (St (Cl (Lam t) e) [])
   More : Step p q -> Reduces n q -> Reduces (S n)  p
 
+export
 reducesDet : Reduces m p -> Reduces n p -> m = n
 reducesDet  Stop         Stop        = Refl
 reducesDet (More s1 r1) (More s2 r2) = cong S $ reducesDet r1 (rewrite deterministic s1 s2 in r2)

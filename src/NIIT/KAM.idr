@@ -25,7 +25,7 @@ mutual
 
   public export
   data CloT : Clos -> Ty -> Type where
-    ClT : {0 n : Nat} -> {0 e : Env n} -> {0 u : Term n} ->
+    ClT : {n : Nat} -> {0 e : Env n} -> {0 u : Term n} ->
           {ns : Vect n Nat} -> {0 g : Ctx n} -> {0 hl : HasLengths g ns} ->
           TermT g u t -> EnvT e g -> CloT (Cl u e) t
 
@@ -62,15 +62,18 @@ sizeStack (Arg c p) = sizeCla c + sizeStack p
 
 public export
 data StateT : State -> Ty -> Type where
-  StT : CloT c t1 -> StackT p t1 t -> StateT (St c p) t
+  StT : {0 p : Stack} ->
+        CloT c t1 -> StackT p t1 t -> StateT (St c p) t
 
 public export
 sizeState : StateT p t -> Nat
 sizeState (StT c p) = sizeClo c + sizeStack p
 
+export
 initT : TermT [] u t -> StateT (KAM.init u) t
 initT d = StT (ClT {hl=NilHL} d []) Mt
 
+export
 initTSize : (d : TermT [] u t) -> sizeState (initT d) = sizeTerm d
 initTSize d = rewrite plusZeroRightNeutral (sizeTerm d) in
               plusZeroRightNeutral (sizeTerm d)
@@ -135,15 +138,29 @@ envSplitSize {n=S n} {ns=n1::ns} {g2=g2:>x2} {hl=ConsHL hl p} (c::d) = rewrite c
                                                                        interchange (sizeCla $ fst $ claSplit c) (sizeCla $ snd $ claSplit c)
                                                                                    (sizeEnv $ fst $ envSplit d) (sizeEnv $ snd $ envSplit d)
 
-export
-claEmpty : (d : ClaT c []) -> sizeCla d = 0
-claEmpty NilC = Refl
+claJoin : ClaT c s1 -> ClaT c s2 -> ClaT c (s1++s2)
+claJoin  NilC        c2 = c2
+claJoin (ConsC c c1) c2 = ConsC c $ claJoin c1 c2
 
 export
-envEmpty : (d : EnvT e (Empty n)) -> sizeEnv d = 0
-envEmpty []     = Refl
-envEmpty (c::d) = rewrite claEmpty c in
-                  envEmpty d
+envJoin : EnvT e g1 -> EnvT e g2 -> EnvT e (zip g1 g2)
+envJoin []       []       = []
+envJoin (c1::e1) (c2::e2) = claJoin c1 c2 :: envJoin e1 e2
+
+export
+envEmpty : {n : Nat} -> {0 e : Env n} -> EnvT e (Empty n)
+envEmpty {n=Z}   {e=[]}   = []
+envEmpty {n=S n} {e=c::e} = NilC :: envEmpty
+
+export
+claEmptySize : (d : ClaT c []) -> sizeCla d = 0
+claEmptySize NilC = Refl
+
+export
+envEmptySize : (d : EnvT e (Empty n)) -> sizeEnv d = 0
+envEmptySize []     = Refl
+envEmptySize (c::d) = rewrite claEmptySize c in
+                      envEmptySize d
 
 export
 mkCla : {n1 : Nat} -> {0 s : List Ty} -> {0 p1 : HasLength s n1} ->
@@ -157,10 +174,19 @@ export
 sizeMkCla : {n1 : Nat} -> {0 s : List Ty} -> {0 p1 : HasLength s n1} ->
             {n : Nat} -> {0 g : Ctx n} -> {0 e : Env n} -> {0 u : Term n} ->
             (d : EnvT e g) -> (a : AuxT g u s) -> sizeAux a + sizeEnv d = sizeCla (mkCla {p1} d a)
-sizeMkCla {n1=Z}   {p1=Z}    d  NilA              = envEmpty d
+sizeMkCla {n1=Z}   {p1=Z}    d  NilA                   = envEmptySize d
 sizeMkCla {n1=S n} {p1=S p1} d (ConsA {hl} {g2} x p a) = rewrite permuteEnvSize p d in
                                                          rewrite envSplitSize {hl} {g2} (permuteEnv p d) in
                                                          rewrite interchange (sizeTerm x) (sizeAux a) (sizeEnv $ fst $ envSplit {hl} {g2} $ permuteEnv p d)
                                                                                                       (sizeEnv $ snd $ envSplit {hl} {g2} $ permuteEnv p d) in
                                                          rewrite sizeMkCla (snd $ envSplit {hl} {g2} $ permuteEnv p d) a in
                                                          Refl
+
+export
+unMkCla : {n : Nat} -> {0 e : Env n} -> {0 u : Term n} ->
+          ClaT (Cl u e) s -> Exists (\g => (Subset (Vect n Nat) (HasLengths g), EnvT e g, AuxT g u s))
+unMkCla  NilC                               = Evidence (Empty n) (Element (replicate n Z) emptyHL, envEmpty, NilA)
+unMkCla (ConsC (ClT {g} {ns} {hl} u0 e0) c) = let Evidence g1 (Element ns1 hl1, e1, a1) = unMkCla c
+                                                  0 hl2 = zipHL hl hl1
+                                               in
+                                              Evidence (zip g g1) (Element (zipWith (+) ns ns1) hl2, envJoin e0 e1, ConsA {hl} u0 (permCtxRefl {hl=hl2}) a1)

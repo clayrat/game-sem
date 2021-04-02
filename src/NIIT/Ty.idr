@@ -66,4 +66,5 @@ permCtxRefl {ns=n::ns} {hl=ConsHL hl p} = SnP (permCtxRefl {hl}) (permRefl {p})
 public export
 data ElemT : Ctx n -> Fin n -> Ty -> Type where
   Zero : {n : Nat} -> ElemT ((Empty n) :> [t]) FZ t
-  Suc  : ElemT g i t -> ElemT (g :> []) (FS i) t
+  Suc  : {0 i : Fin n} ->
+         ElemT g i t -> ElemT (g :> []) (FS i) t
